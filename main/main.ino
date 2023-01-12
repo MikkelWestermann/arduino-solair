@@ -3,6 +3,9 @@
 #include <DHT.h>
 #include <ESP8266WiFi.h>
 #include <ThingSpeak.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <regex.h>
 
 #define STEPS 32
 
@@ -18,11 +21,15 @@ DHT outside_dht(outsideDHT11_Pin, DHTTYPE, 15);
 const char* ssid = "OnePlus 5T";
 const char* pass = "12345678";
 WiFiClient client;
+
+unsigned long myTalkBackID = 47865;
+const char* myTalkBackKey = "L9LRWG9JR106RF4P";
+
 unsigned long channelID = 2005015;        //your TS channal
 const char* APIKey = "ORCM6CR05BI287WU";  //your TS API
 const char* server = "api.thingspeak.com";
 float desiredTemp = 27.0;
-float delayBetweenUpdates = 1000 * 20; //in ms
+float delayBetweenUpdates = 1000 * 20;  //in ms
 bool boxIsOpen = false;
 
 Servo s1;
@@ -42,6 +49,9 @@ void loop() {
   //int photoresistorValue = analogRead(A0);
   //Serial.println(photoresistorValue);
 
+  //Check for updates:
+  fetchUpdateFromTalkBack();
+
   //Temporary logic will have to be corrected when physical enviroment is done
   //Check if we need to move hot air in
   if (whenToUseTemperatureModel()) {
@@ -52,24 +62,24 @@ void loop() {
     }
 
     // If using stepper.step(200) then a soft WDT will occur hence we split up and use yield(). since yield resets internal timer
-    for (int i = 0; i < 4; i++) {
+    while (whenToUseTemperatureModel()) {
       stepper.step(50);
       yield();
     }
 
-  } else if (boxIsOpen) {
-    closeBox();
-    boxIsOpen = false;
-    delay(1000);
+    if (boxIsOpen) {
+      closeBox();
+      boxIsOpen = false;
+      delay(1000);
+    }
   }
 
   //Do measurements every 2s
   Serial.print("Temperature difference: ");
   Serial.print(differenceInTemperature());
   Serial.println(" C");
-  delay(delayBetweenUpdates);
-
   writeToThingSpeak();
+  delay(delayBetweenUpdates);
 }
 
 
@@ -121,6 +131,123 @@ void writeToThingSpeak() {
   client.stop();
 }
 
+void fetchUpdateFromTalkBack() {
+  ThingSpeak.begin(client);
+
+  int timeOutCounter = 0;
+  // Connect or reconnect to Wi-Fi
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.print("Attempting to connect to SSID: ");
+    Serial.println(String(ssid));
+    while (WiFi.status() != WL_CONNECTED) {
+      WiFi.begin(ssid, pass);
+      Serial.print(".");
+      timeOutCounter++;
+      delay(5000);
+      if (timeOutCounter > 4) {
+        return;
+      }
+    }
+    Serial.println("\nConnected.");
+  }
+
+  // Create the TalkBack URI
+  String tbURI = String("/talkbacks/") + String(myTalkBackID) + String("/commands/execute");
+
+  // Create the message body for the POST out of the values
+  String postMessage = String("api_key=") + String(myTalkBackKey);
+
+  // Make a string for any commands that might be in the queue
+  String newCommand = String();
+
+  // Make the POST to ThingSpeak
+  int x = httpPOST(tbURI, postMessage, newCommand);
+  client.stop();
+
+  // Check the result
+  if (x == 200) {
+    Serial.println("checking queue...");
+    // Check for a command returned from TalkBack
+    if (newCommand.length() != 0) {
+
+      Serial.print("  Latest command from queue: ");
+      Serial.println(newCommand);
+
+      //Proccess command:
+      char tab2[1024];
+      strcpy(tab2, newCommand.c_str());
+      int res = getTempFromString(tab2);
+
+      Serial.println(tab2);
+
+      if (res != -1) {
+        Serial.print("THE RECIEVED TEMP IS: ");
+        Serial.println(res);
+        desiredTemp = res;
+      }
+    }
+
+  } else {
+    Serial.println("Problem checking queue. HTTP error code " + String(x));
+  }
+}
+
+// General function to POST to ThingSpeak
+int httpPOST(String uri, String postMessage, String& response) {
+
+  bool connectSuccess = false;
+  connectSuccess = client.connect("api.thingspeak.com", 80);
+
+  if (!connectSuccess) {
+    return -301;
+  }
+
+  postMessage += "&headers=false";
+
+  String Headers = String("POST ") + uri + String(" HTTP/1.1\r\n") + String("Host: api.thingspeak.com\r\n") + String("Content-Type: application/x-www-form-urlencoded\r\n") + String("Connection: close\r\n") + String("Content-Length: ") + String(postMessage.length()) + String("\r\n\r\n");
+
+  client.print(Headers);
+  client.print(postMessage);
+
+  long startWaitForResponseAt = millis();
+  while (client.available() == 0 && millis() - startWaitForResponseAt < 5000) {
+    delay(100);
+  }
+
+  if (client.available() == 0) {
+    return -304;  // Didn't get server response in time
+  }
+
+  if (!client.find(const_cast<char*>("HTTP/1.1"))) {
+    return -303;  // Couldn't parse response (didn't find HTTP/1.1)
+  }
+
+  int status = client.parseInt();
+  if (status != 200) {
+    return status;
+  }
+
+  if (!client.find(const_cast<char*>("\n\r\n"))) {
+    return -303;
+  }
+
+  String tempString = String(client.readString());
+  response = tempString;
+
+  return status;
+}
+
+int getTempFromString(char* str) {
+  char tempString[9];  // "SET_TEMP_" is 8 characters long
+  int temp;
+  if (strstr(str, "SET_TEMP_") != NULL) {
+    strcpy(tempString, strstr(str, "SET_TEMP_") + 9);
+    sscanf(tempString, "%d", &temp);
+    return temp;
+  } else {
+    return -1;
+  }
+}
 
 //TODO finish following function physical setup is complete:
 void openBox() {
@@ -133,5 +260,5 @@ void closeBox() {
 
 //TODO at the very least this should have some overwrite switch that can be enabled in thingspeak.
 bool whenToUseTemperatureModel() {
-  return differenceInTemperature() > 2.2 && inside_dht.readTemperature() < desiredTemp;
+  return differenceInTemperature() > 1.001 && inside_dht.readTemperature() < desiredTemp;
 }
