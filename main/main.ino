@@ -14,6 +14,20 @@
 #define outsideDHT11_Pin D5
 #define DHTTYPE DHT11
 
+//The different states in the statemachine
+typedef enum {
+  SLEEP,   //go back to sleep and increment important counters
+  MOVE,    //activate motor and move air into apartment
+  OPEN,    //open  the hatch
+  CLOSE,   //close the hatch
+  SEND,    //send data to thingspeak
+  RECIEVE  //recieve data from thingspeak a.i. empty queue.
+} States;
+
+int currentState = SLEEP;
+int timeInState = 0;
+bool overWriteActivated = false;
+
 Stepper stepper(STEPS, D1, D2, D3, D4);
 DHT inside_dht(insideDHT11_Pin, DHTTYPE, 15);
 DHT outside_dht(outsideDHT11_Pin, DHTTYPE, 15);
@@ -29,7 +43,7 @@ unsigned long channelID = 2005015;        //your TS channal
 const char* APIKey = "ORCM6CR05BI287WU";  //your TS API
 const char* server = "api.thingspeak.com";
 float desiredTemp = 27.0;
-float delayBetweenUpdates = 1000 * 20;  //in ms
+float delayBetweenUpdates = 1000 * 3;  //in ms
 bool boxIsOpen = false;
 
 Servo s1;
@@ -48,38 +62,70 @@ void loop() {
   //TODO: use this for something mabey in model.
   //int photoresistorValue = analogRead(A0);
   //Serial.println(photoresistorValue);
+  switch (currentState) {
+    case SLEEP:
+      delay(delayBetweenUpdates);
 
-  //Check for updates:
-  fetchUpdateFromTalkBack();
+      // Check if ready to move air
+      if (whenToUseTemperatureModel()) {
+        currentState = OPEN;
+        break;
+      } else if (timeInState % 20 == 0) {
+        currentState = RECIEVE;
+        break;
+      } else if (timeInState % 9 == 0) {
+        currentState = SEND;
+        break;
+      }
 
-  //Temporary logic will have to be corrected when physical enviroment is done
-  //Check if we need to move hot air in
-  if (whenToUseTemperatureModel()) {
-    if (!boxIsOpen) {
+      break;
+    case SEND:
+      writeToThingSpeak();
+      currentState = SLEEP;
+      break;
+    case RECIEVE:
+      fetchUpdateFromTalkBack();
+      currentState = SLEEP;
+      break;
+    case OPEN:
       openBox();
-      boxIsOpen = true;
-      delay(1000);
-    }
-
-    // If using stepper.step(200) then a soft WDT will occur hence we split up and use yield(). since yield resets internal timer
-    while (whenToUseTemperatureModel()) {
-      stepper.step(50);
-      yield();
-    }
-
-    if (boxIsOpen) {
+      currentState = MOVE;
+      break;
+    case CLOSE:
       closeBox();
-      boxIsOpen = false;
-      delay(1000);
-    }
+      overWriteActivated = false;
+      currentState = SLEEP;
+      break;
+    case MOVE:
+      stepper.step(100);
+
+      //Only check sometimes
+      if (timeInState % 10 == 0) {
+        if (!whenToUseTemperatureModel()) {
+          currentState = CLOSE;
+        }
+      }
+
+      break;
+    default:
+      Serial.println("your not suppose to be here");
   }
 
-  //Do measurements every 2s
+  Serial.print("The current state is: ");
+  Serial.print(getStateName(currentState));
+  Serial.println();
+
+  timeInState = (timeInState + 1) % 100;
+
+  Serial.print("time spent is: ");
+  Serial.print(timeInState);
+  Serial.println();
+
+
+  //Do measurements
   Serial.print("Temperature difference: ");
   Serial.print(differenceInTemperature());
   Serial.println(" C");
-  writeToThingSpeak();
-  delay(delayBetweenUpdates);
 }
 
 
@@ -176,20 +222,34 @@ void fetchUpdateFromTalkBack() {
       //Proccess command:
       char tab2[1024];
       strcpy(tab2, newCommand.c_str());
-      int res = getTempFromString(tab2);
 
-      Serial.println(tab2);
-
-      if (res != -1) {
-        Serial.print("THE RECIEVED TEMP IS: ");
-        Serial.println(res);
-        desiredTemp = res;
-      }
+      HandelStringInput(tab2);
     }
 
   } else {
     Serial.println("Problem checking queue. HTTP error code " + String(x));
   }
+}
+
+void HandelStringInput(char* input) {
+  if (compareStartOfString("SET_TEMP_", input)) {
+    Serial.println(getTempFromString(input));
+    int res = getTempFromString(input);
+    if (res != -1) {
+      Serial.print("THE RECIEVED TEMP IS: ");
+      Serial.println(res);
+      desiredTemp = res;
+    }
+  } else if (compareStartOfString("OVERWRITE", input)) {
+    overWriteActivated = true;
+    Serial.println("OVERWRITE INITIATET");
+  } else {  //unrecognized command
+    Serial.println("unrecognized command");
+  }
+}
+
+bool compareStartOfString(const char* pre, const char* str) {
+  return strncmp(pre, str, strlen(pre)) == 0;
 }
 
 // General function to POST to ThingSpeak
@@ -249,16 +309,39 @@ int getTempFromString(char* str) {
   }
 }
 
+const char* getStateName(int state) {
+  switch (state) {
+    case SLEEP:
+      return "SLEEP";
+    case SEND:
+      return "SEND";
+    case RECIEVE:
+      return "RECIEVE";
+    case OPEN:
+      return "OPEN";
+    case CLOSE:
+      return "CLOSE";
+    case MOVE:
+      return "MOVE";
+    default:
+      return "your not suppose to be here";
+  }
+}
+
 //TODO finish following function physical setup is complete:
 void openBox() {
   s1.write(90);
+  boxIsOpen = true;
+  delay(1000);
 }
 
 void closeBox() {
   s1.write(0);
+  boxIsOpen = false;
+  delay(1000);
 }
 
 //TODO at the very least this should have some overwrite switch that can be enabled in thingspeak.
 bool whenToUseTemperatureModel() {
-  return differenceInTemperature() > 1.001 && inside_dht.readTemperature() < desiredTemp;
+  return (differenceInTemperature() > 1.001 && inside_dht.readTemperature() < desiredTemp) || overWriteActivated;
 }
