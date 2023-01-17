@@ -1,14 +1,15 @@
 #include <Servo.h>  // servo library
-#include <Stepper.h>
 #include <DHT.h>
 #include <ESP8266WiFi.h>
 #include <ThingSpeak.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <regex.h>
+#include <espnow.h>
 
 #define STEPS 32
 
+#define transistorPin D4
 #define servoPin D6
 #define insideDHT11_Pin D7
 #define outsideDHT11_Pin D5
@@ -24,11 +25,17 @@ typedef enum {
   RECIEVE  //recieve data from thingspeak a.i. empty queue.
 } States;
 
+typedef struct struct_message {
+  float humidity;
+  float temp;
+} struct_message;
+
+struct_message myData;
+
 int currentState = SLEEP;
 int timeInState = 0;
 bool overWriteActivated = false;
 
-Stepper stepper(STEPS, D1, D2, D3, D4);
 DHT inside_dht(insideDHT11_Pin, DHTTYPE, 15);
 DHT outside_dht(outsideDHT11_Pin, DHTTYPE, 15);
 
@@ -49,10 +56,19 @@ bool boxIsOpen = false;
 Servo s1;
 void setup() {
   s1.attach(servoPin);
-  stepper.setSpeed(200);
 
   inside_dht.begin();
   outside_dht.begin();
+
+  esp_now_init();
+
+  pinMode(transistorPin, OUTPUT);
+
+  uint8_t peerAddress[] = { 0xC8, 0x2B, 0x96, 0x09, 0x0E, 0x47 };
+  esp_now_add_peer(peerAddress, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
+
+  esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
+  esp_now_register_recv_cb(OnDataRecv);
 
   WiFi.begin(ssid, pass);
   Serial.begin(115200);
@@ -84,7 +100,7 @@ void loop() {
       currentState = SLEEP;
       break;
     case RECIEVE:
-      fetchUpdateFromTalkBack();
+      //fetchUpdateFromTalkBack();
       currentState = SLEEP;
       break;
     case OPEN:
@@ -97,13 +113,17 @@ void loop() {
       currentState = SLEEP;
       break;
     case MOVE:
-      stepper.step(100);
-
+      digitalWrite(transistorPin, LOW);
+      delay(500);
       //Only check sometimes
       if (timeInState % 10 == 0) {
+        digitalWrite(transistorPin, HIGH);
+        delay(500);
         if (!whenToUseTemperatureModel()) {
           currentState = CLOSE;
+          break;
         }
+        digitalWrite(transistorPin, LOW);
       }
 
       break;
@@ -128,6 +148,16 @@ void loop() {
   Serial.println(" C");
 }
 
+void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
+  memcpy(&myData, incomingData, sizeof(myData));
+  Serial.print("Bytes received: ");
+  Serial.println(len);
+  Serial.print("temp: ");
+  Serial.println(myData.temp);
+  Serial.print("Humidity: ");
+  Serial.println(myData.humidity);
+  Serial.println();
+}
 
 float differenceInTemperature() {
   return outside_dht.readTemperature() - inside_dht.readTemperature();
@@ -343,5 +373,5 @@ void closeBox() {
 
 //TODO at the very least this should have some overwrite switch that can be enabled in thingspeak.
 bool whenToUseTemperatureModel() {
-  return (differenceInTemperature() > 1.001 && inside_dht.readTemperature() < desiredTemp) || overWriteActivated;
+  return (differenceInTemperature() > 4.001 && inside_dht.readTemperature() < desiredTemp) || overWriteActivated;
 }
