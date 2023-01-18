@@ -4,10 +4,7 @@
 #include <ThingSpeak.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <regex.h>
 #include <espnow.h>
-
-#define STEPS 32
 
 #define transistorPin D4
 #define servoPin D6
@@ -25,6 +22,7 @@ typedef enum {
   RECIEVE  //recieve data from thingspeak a.i. empty queue.
 } States;
 
+//The sturct
 typedef struct struct_message {
   float humidity;
   float temp;
@@ -32,23 +30,30 @@ typedef struct struct_message {
 
 struct_message myData;
 
+// We start in SLEEP state.
 int currentState = SLEEP;
-int timeInState = 0;
+int currentTimeIncrement = 0;
 bool overWriteActivated = false;
 
 DHT inside_dht(insideDHT11_Pin, DHTTYPE, 15);
 DHT outside_dht(outsideDHT11_Pin, DHTTYPE, 15);
 
-const char* ssid = "OnePlus 5T";
+//const char* ssid = "OnePlus 5T";
+//const char* pass = "12345678";
+const char* ssid = "AndroidAP";
 const char* pass = "12345678";
 WiFiClient client;
 
-unsigned long myTalkBackID = 47865;
-const char* myTalkBackKey = "L9LRWG9JR106RF4P";
+unsigned long myTalkBackID = 47856;
+//const char* myTalkBackKey = "L9LRWG9JR106RF4P";
+const char* myTalkBackKey = "DOS2ZPZ7O5HLWR20";
 
 unsigned long channelID = 2005015;        //your TS channal
 const char* APIKey = "ORCM6CR05BI287WU";  //your TS API
 const char* server = "api.thingspeak.com";
+//const char* APIKey = "DOS2ZPZ7O5HLWR20";  //your TS API
+//const char* server = "mikkelwestermann.github.io";
+
 float desiredTemp = 27.0;
 float delayBetweenUpdates = 1000 * 3;  //in ms
 bool boxIsOpen = false;
@@ -72,12 +77,17 @@ void setup() {
 
   WiFi.begin(ssid, pass);
   Serial.begin(115200);
+
+  // Make sure motor is turned off initially
+  digitalWrite(transistorPin, HIGH);
 }
 void loop() {
   //read photoresistor
   //TODO: use this for something mabey in model.
   //int photoresistorValue = analogRead(A0);
   //Serial.println(photoresistorValue);
+
+
   switch (currentState) {
     case SLEEP:
       delay(delayBetweenUpdates);
@@ -86,10 +96,10 @@ void loop() {
       if (whenToUseTemperatureModel()) {
         currentState = OPEN;
         break;
-      } else if (timeInState % 20 == 0) {
+      } else if (currentTimeIncrement % 20 == 0) {
         currentState = RECIEVE;
         break;
-      } else if (timeInState % 9 == 0) {
+      } else if (currentTimeIncrement % 9 == 0) {
         currentState = SEND;
         break;
       }
@@ -100,7 +110,7 @@ void loop() {
       currentState = SLEEP;
       break;
     case RECIEVE:
-      //fetchUpdateFromTalkBack();
+      fetchUpdateFromTalkBack();
       currentState = SLEEP;
       break;
     case OPEN:
@@ -116,9 +126,9 @@ void loop() {
       digitalWrite(transistorPin, LOW);
       delay(500);
       //Only check sometimes
-      if (timeInState % 10 == 0) {
+      if (currentTimeIncrement % 10 == 0) {
         digitalWrite(transistorPin, HIGH);
-        delay(500);
+        delay(2000);
         if (!whenToUseTemperatureModel()) {
           currentState = CLOSE;
           break;
@@ -135,10 +145,10 @@ void loop() {
   Serial.print(getStateName(currentState));
   Serial.println();
 
-  timeInState = (timeInState + 1) % 100;
+  currentTimeIncrement = (currentTimeIncrement + 1) % 100;
 
   Serial.print("time spent is: ");
-  Serial.print(timeInState);
+  Serial.print(currentTimeIncrement);
   Serial.println();
 
 
@@ -207,6 +217,8 @@ void writeToThingSpeak() {
   client.stop();
 }
 
+
+// All talkback logic was heavily inspired by: https://se.mathworks.com/help/thingspeak/control-a-light-with-talkback-and-arduino.html
 void fetchUpdateFromTalkBack() {
   ThingSpeak.begin(client);
 
@@ -238,6 +250,7 @@ void fetchUpdateFromTalkBack() {
 
   // Make the POST to ThingSpeak
   int x = httpPOST(tbURI, postMessage, newCommand);
+
   client.stop();
 
   // Check the result
@@ -253,7 +266,16 @@ void fetchUpdateFromTalkBack() {
       char tab2[1024];
       strcpy(tab2, newCommand.c_str());
 
-      HandelStringInput(tab2);
+      // Cull beginning of string since it contains \n.
+      char substring[1000];
+      int len = newCommand.length();
+      int pos = 4;
+      
+      for (int c = 0; c < len; c ++) {
+        substring[c] = tab2[pos + c - 1];
+      }
+
+      HandelStringInput(substring);
     }
 
   } else {
@@ -278,6 +300,9 @@ void HandelStringInput(char* input) {
   }
 }
 
+
+
+// Taken from: https://stackoverflow.com/questions/4770985/how-to-check-if-a-string-starts-with-another-string-in-c
 bool compareStartOfString(const char* pre, const char* str) {
   return strncmp(pre, str, strlen(pre)) == 0;
 }
@@ -360,18 +385,22 @@ const char* getStateName(int state) {
 
 //TODO finish following function physical setup is complete:
 void openBox() {
-  s1.write(90);
+  s1.write(180);
   boxIsOpen = true;
-  delay(1000);
+  delay(3000);
 }
 
 void closeBox() {
   s1.write(0);
   boxIsOpen = false;
-  delay(1000);
+  delay(3000);
 }
 
 //TODO at the very least this should have some overwrite switch that can be enabled in thingspeak.
 bool whenToUseTemperatureModel() {
-  return (differenceInTemperature() > 4.001 && inside_dht.readTemperature() < desiredTemp) || overWriteActivated;
+  if (overWriteActivated) {
+    overWriteActivated = false;
+    return true;
+  }
+  return (differenceInTemperature() > 1.5 && inside_dht.readTemperature() < desiredTemp);
 }
