@@ -11,6 +11,7 @@
 #define insideDHT11_Pin D7
 #define outsideDHT11_Pin D5
 #define DHTTYPE DHT11
+#define photoresistorPin A0
 
 //The different states in the statemachine
 typedef enum {
@@ -69,7 +70,7 @@ void setup() {
 
   pinMode(transistorPin, OUTPUT);
 
-// // 2C:3A:E8:38:16:6C
+  // // 2C:3A:E8:38:16:6C
 
   uint8_t peerAddress[] = { 0x2C, 0x3A, 0xE8, 0x38, 0x16, 0x6C };
   esp_now_add_peer(peerAddress, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
@@ -85,8 +86,8 @@ void setup() {
 }
 void loop() {
   //read photoresistor
-  //TODO: use this for something mabey in model.
-  //int photoresistorValue = analogRead(A0);
+  //TODO: use this for something maybe in model.
+  int photoresistorValue = analogRead(photoresistorPin);
   //Serial.println(photoresistorValue);
 
 
@@ -272,8 +273,8 @@ void fetchUpdateFromTalkBack() {
       char substring[1000];
       int len = newCommand.length();
       int pos = 4;
-      
-      for (int c = 0; c < len; c ++) {
+
+      for (int c = 0; c < len; c++) {
         substring[c] = tab2[pos + c - 1];
       }
 
@@ -398,11 +399,17 @@ void closeBox() {
   delay(3000);
 }
 
+
 //TODO at the very least this should have some overwrite switch that can be enabled in thingspeak.
 bool whenToUseTemperatureModel() {
   if (overWriteActivated) {
     overWriteActivated = false;
     return true;
   }
-  return (differenceInTemperature() > 1.5 && inside_dht.readTemperature() < desiredTemp);
+  if (photoresistorValue < 30) {
+    return (differenceInTemperature() > 2 && inside_dht.readTemperature() < desiredTemp && 
+    ((inside_dht.readHumidity() > 45 && outside_dht_readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht_readHumidity() > 30)))
+  }
+  return (differenceInTemperature() > 5 && inside_dht.readTemperature() < desiredTemp && 
+    ((inside_dht.readHumidity() > 45 && outside_dht_readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht_readHumidity() > 30)))
 }
