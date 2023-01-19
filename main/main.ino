@@ -22,6 +22,8 @@ typedef enum {
   RECIEVE  //recieve data from thingspeak a.i. empty queue.
 } States;
 
+
+
 //The sturct
 typedef struct struct_message {
   float humidity;
@@ -29,6 +31,10 @@ typedef struct struct_message {
 } struct_message;
 
 struct_message myData;
+struct_message outgoing;
+struct_message incoming;
+
+
 
 // We start in SLEEP state.
 int currentState = SLEEP;
@@ -58,6 +64,8 @@ float desiredTemp = 27.0;
 float delayBetweenUpdates = 1000 * 3;  //in ms
 bool boxIsOpen = false;
 
+uint8_t peerAddress[] = { 0x2C, 0x3A, 0xE8, 0x38, 0x16, 0x6C };
+
 Servo s1;
 void setup() {
   s1.attach(servoPin);
@@ -69,13 +77,13 @@ void setup() {
 
   pinMode(transistorPin, OUTPUT);
 
-// // 2C:3A:E8:38:16:6C
+  // // 2C:3A:E8:38:16:6C
 
-  uint8_t peerAddress[] = { 0x2C, 0x3A, 0xE8, 0x38, 0x16, 0x6C };
-  esp_now_add_peer(peerAddress, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
-
-  esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
+  // set peer adresse, self role, and what to do when sending and recieving
+  esp_now_add_peer(peerAddress, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+  esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
   esp_now_register_recv_cb(OnDataRecv);
+  esp_now_register_send_cb(OnDataSent);
 
   WiFi.begin(ssid, pass);
   Serial.begin(115200);
@@ -88,7 +96,6 @@ void loop() {
   //TODO: use this for something mabey in model.
   //int photoresistorValue = analogRead(A0);
   //Serial.println(photoresistorValue);
-
 
   switch (currentState) {
     case SLEEP:
@@ -108,10 +115,15 @@ void loop() {
 
       break;
     case SEND:
+      
       writeToThingSpeak();
+      outgoing.temp = outside_dht.readTemperature();
+      outgoing.humidity = outside_dht.readHumidity();
+      esp_now_send(peerAddress, (uint8_t *) &outgoing, sizeof(outgoing));
       currentState = SLEEP;
       break;
     case RECIEVE:
+      
       fetchUpdateFromTalkBack();
       currentState = SLEEP;
       break;
@@ -125,6 +137,7 @@ void loop() {
       currentState = SLEEP;
       break;
     case MOVE:
+      
       digitalWrite(transistorPin, LOW);
       delay(500);
       //Only check sometimes
@@ -158,7 +171,20 @@ void loop() {
   Serial.print("Temperature difference: ");
   Serial.print(differenceInTemperature());
   Serial.println(" C");
+
+
 }
+// Message on sending data
+void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
+  Serial.print("Last Packet Send Status: ");
+  if (sendStatus == 0) {
+    Serial.println("Delivery success");
+  }
+  else {
+    Serial.println("Delivery fail");
+  }
+}
+
 
 void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
   memcpy(&myData, incomingData, sizeof(myData));
@@ -272,7 +298,7 @@ void fetchUpdateFromTalkBack() {
       char substring[1000];
       int len = newCommand.length();
       int pos = 4;
-      
+
       for (int c = 0; c < len; c ++) {
         substring[c] = tab2[pos + c - 1];
       }
@@ -387,13 +413,13 @@ const char* getStateName(int state) {
 
 //TODO finish following function physical setup is complete:
 void openBox() {
-  s1.write(180);
+  s1.write(0);
   boxIsOpen = true;
   delay(3000);
 }
 
 void closeBox() {
-  s1.write(0);
+  s1.write(180);
   boxIsOpen = false;
   delay(3000);
 }
