@@ -10,7 +10,9 @@
 #define DHTTYPE DHT11
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-uint8_t broadcastAddress[] = {0x84, 0xF3, 0xEB, 0x31, 0x27, 0xB6};
+// 2C:3A:E8:38:16:6C
+
+uint8_t broadcastAddress[] = { 0xC8, 0x2B, 0x96, 0x09, 0x0E, 0x47 };
 typedef struct struct_message {
   float humidity;
   float temp;
@@ -31,7 +33,7 @@ void setup() {
     Serial.println("Error initializing ESP-NOW");
     return;
   }
-  
+
   // Once ESPNow is successfully Init, we will register for Send CB to
   // get the status of Trasnmitted packet
   esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
@@ -39,17 +41,16 @@ void setup() {
 
   // Register peer
   esp_now_add_peer(broadcastAddress, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
-  lcd.begin(); //display initialization
+  lcd.init();  //display initialization
+  lcd.clear();
   inside_dht.begin();
-
 }
 
 void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
   Serial.print("Last Packet Send Status: ");
   if (sendStatus == 0) {
     Serial.println("Delivery success");
-  }
-  else {
+  } else {
     Serial.println("Delivery fail");
   }
 }
@@ -65,22 +66,20 @@ void loop() {
   myData.humidity = inside_dht.readHumidity();
   myData.temp = inside_dht.readTemperature();
 
-  esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
-  
+  esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
+
   //convert analog reading (0-1023) to voltage (0-5.0 V)
-  Serial.print(in_tt); Serial.println("°");
+  Serial.print(in_tt);
+  Serial.println("°");
   // Serial.write(176)
   lcd.clear();
 
 
 
-  lcd.backlight(); // activate the backlight
-  lcd.setCursor(0, 0); // place cursor at first line
+  lcd.backlight();      // activate the backlight
+  lcd.setCursor(0, 0);  // place cursor at first line
 
-  lcd.print(in_tt); lcd.print("C");
+  lcd.print(in_tt);
+  lcd.print("C");
   delay(readDelay);
-
-
-
-
 }

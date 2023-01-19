@@ -69,7 +69,9 @@ void setup() {
 
   pinMode(transistorPin, OUTPUT);
 
-  uint8_t peerAddress[] = { 0xC8, 0x2B, 0x96, 0x09, 0x0E, 0x47 };
+// // 2C:3A:E8:38:16:6C
+
+  uint8_t peerAddress[] = { 0x2C, 0x3A, 0xE8, 0x38, 0x16, 0x6C };
   esp_now_add_peer(peerAddress, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
 
   esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
