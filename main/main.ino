@@ -91,11 +91,13 @@ void setup() {
 
   // Make sure motor is turned off initially
   digitalWrite(transistorPin, HIGH);
+  closeBox();
 }
+  
 void loop() {
   //read photoresistor
   //TODO: use this for something maybe in model.
-  int photoresistorValue = analogRead(photoresistorPin);
+  //int photoresistorValue = analogRead(photoresistorPin);
   //Serial.println(photoresistorValue);
 
   switch (currentState) {
@@ -116,7 +118,7 @@ void loop() {
 
       break;
     case SEND:
-      
+
       writeToThingSpeak();
       outgoing.temp = outside_dht.readTemperature();
       outgoing.humidity = outside_dht.readHumidity();
@@ -124,7 +126,7 @@ void loop() {
       currentState = SLEEP;
       break;
     case RECIEVE:
-      
+
       fetchUpdateFromTalkBack();
       currentState = SLEEP;
       break;
@@ -138,7 +140,7 @@ void loop() {
       currentState = SLEEP;
       break;
     case MOVE:
-      
+
       digitalWrite(transistorPin, LOW);
       delay(500);
       //Only check sometimes
@@ -429,14 +431,15 @@ void closeBox() {
 
 //TODO at the very least this should have some overwrite switch that can be enabled in thingspeak.
 bool whenToUseTemperatureModel() {
+  int photoresistorValue = analogRead(photoresistorPin);
   if (overWriteActivated) {
     overWriteActivated = false;
     return true;
   }
   if (photoresistorValue < 30) {
-    return (differenceInTemperature() > 2 && inside_dht.readTemperature() < desiredTemp && 
-    ((inside_dht.readHumidity() > 45 && outside_dht_readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht_readHumidity() > 30)))
+    return (differenceInTemperature() > 2 && inside_dht.readTemperature() < desiredTemp &&
+            ((inside_dht.readHumidity() > 45 && outside_dht.readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht.readHumidity() > 30)));
   }
-  return (differenceInTemperature() > 5 && inside_dht.readTemperature() < desiredTemp && 
-    ((inside_dht.readHumidity() > 45 && outside_dht_readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht_readHumidity() > 30)))
+  return (differenceInTemperature() > 5 && inside_dht.readTemperature() < desiredTemp &&
+          ((inside_dht.readHumidity() > 45 && outside_dht.readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht.readHumidity() > 30)));
 }
