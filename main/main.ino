@@ -1,3 +1,14 @@
+/*
+* The main script which runs in the box
+* This script is responsible for handling all the logic
+* including the temperature model, all physical actuation and communication with thingspeak
+* both sending and talkback.
+*
+* Each method will have a name signifying who was mainly resposible for it however we worked in cooporation on almost all of the code.'
+* If a method does not have a name it is because it is either heavily inspired by something found only or straight up a copy.
+*/
+
+
 #include <Servo.h>  // servo library
 #include <DHT.h>
 #include <ESP8266WiFi.h>
@@ -42,32 +53,29 @@ int currentState = SLEEP;
 int currentTimeIncrement = 0;
 bool overWriteActivated = false;
 
-DHT inside_dht(insideDHT11_Pin, DHTTYPE, 15);
 DHT outside_dht(outsideDHT11_Pin, DHTTYPE, 15);
 
-//const char* ssid = "OnePlus 5T";
-//const char* pass = "12345678";
+// Replace these with what is currently being used.
 const char* ssid = "AndroidAP";
 const char* pass = "12345678";
 WiFiClient client;
 
 unsigned long myTalkBackID = 47856;
-//const char* myTalkBackKey = "L9LRWG9JR106RF4P";
 const char* myTalkBackKey = "DOS2ZPZ7O5HLWR20";
 
 unsigned long channelID = 2005015;        //your TS channal
 const char* APIKey = "ORCM6CR05BI287WU";  //your TS API
 const char* server = "api.thingspeak.com";
-//const char* APIKey = "DOS2ZPZ7O5HLWR20";  //your TS API
-//const char* server = "mikkelwestermann.github.io";
 
-float desiredTemp = 27.0;
+float desiredTemp = 27.0;              //Can be set through thingspeak talkback
 float delayBetweenUpdates = 1000 * 3;  //in ms
-bool boxIsOpen = false;
+bool boxIsOpen = false;                //box is initially closed
 
-uint8_t peerAddress[] = { 0x2C, 0x3A, 0xE8, 0x38, 0x16, 0x6C };
+uint8_t peerAddress[] = { 0x2C, 0x3A, 0xE8, 0x38, 0x16, 0x6C };  //MAC adress of the other ESP
 
 Servo s1;
+
+// Responsible Victor (s203951)
 void setup() {
   s1.attach(servoPin);
 
@@ -93,13 +101,10 @@ void setup() {
   digitalWrite(transistorPin, HIGH);
   closeBox();
 }
-  
-void loop() {
-  //read photoresistor
-  //TODO: use this for something maybe in model.
-  //int photoresistorValue = analogRead(photoresistorPin);
-  //Serial.println(photoresistorValue);
 
+// Responsible Thor Dueholm (s194589)
+void loop() {
+  // State machine
   switch (currentState) {
     case SLEEP:
       delay(delayBetweenUpdates);
@@ -117,16 +122,14 @@ void loop() {
       }
 
       break;
-    case SEND:
-
+    case SEND:  //Both writing to thingspeak and esp_now communication
       writeToThingSpeak();
       outgoing.temp = outside_dht.readTemperature();
       outgoing.humidity = outside_dht.readHumidity();
-      esp_now_send(peerAddress, (uint8_t *) &outgoing, sizeof(outgoing));
+      esp_now_send(peerAddress, (uint8_t*)&outgoing, sizeof(outgoing));
       currentState = SLEEP;
       break;
     case RECIEVE:
-
       fetchUpdateFromTalkBack();
       currentState = SLEEP;
       break;
@@ -140,12 +143,12 @@ void loop() {
       currentState = SLEEP;
       break;
     case MOVE:
-
+      // Note LOW is on, HIGH is off.
       digitalWrite(transistorPin, LOW);
       delay(500);
       //Only check sometimes
       if (currentTimeIncrement % 10 == 0) {
-        digitalWrite(transistorPin, HIGH);
+        digitalWrite(transistorPin, HIGH);  // We have to turn motor of or we get NaN reading from DHT11 sensors (don't know why).
         delay(2000);
         if (!whenToUseTemperatureModel()) {
           currentState = CLOSE;
@@ -159,36 +162,42 @@ void loop() {
       Serial.println("your not suppose to be here");
   }
 
+  printDebugging();
+
+  // Incrementing time and thresholding at 100 we do this just so we will not ever reach interger cap.
+  currentTimeIncrement = (currentTimeIncrement + 1) % 100;
+}
+
+// Responsible Thor Dueholm (s194589)
+// Prints only for debugging
+void printDebugging() {
   Serial.print("The current state is: ");
   Serial.print(getStateName(currentState));
   Serial.println();
-
-  currentTimeIncrement = (currentTimeIncrement + 1) % 100;
 
   Serial.print("time spent is: ");
   Serial.print(currentTimeIncrement);
   Serial.println();
 
-
-  //Do measurements
   Serial.print("Temperature difference: ");
   Serial.print(differenceInTemperature());
   Serial.println(" C");
-
-
 }
+
+
 // Message on sending data
-void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
+// Copied from https://randomnerdtutorials.com/esp-now-two-way-communication-esp8266-nodemcu/
+void OnDataSent(uint8_t* mac_addr, uint8_t sendStatus) {
   Serial.print("Last Packet Send Status: ");
   if (sendStatus == 0) {
     Serial.println("Delivery success");
-  }
-  else {
+  } else {
     Serial.println("Delivery fail");
   }
 }
 
-
+// Responsible Mikkel (s194601)
+// Triggerd when recieving data.
 void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
   memcpy(&myData, incomingData, sizeof(myData));
   Serial.print("Bytes received: ");
@@ -200,14 +209,17 @@ void OnDataRecv(uint8_t* mac, uint8_t* incomingData, uint8_t len) {
   Serial.println();
 }
 
+// Responsible Mikkel (s194601)
 float differenceInTemperature() {
   return outside_dht.readTemperature() - inside_dht.readTemperature();
 }
 
+// Responsible Mikkel (s194601)
 float differenceInHumidity() {
   return outside_dht.readHumidity() - inside_dht.readHumidity();
 }
 
+// Responsible Mikkel (s194601)
 float differenceInHeatIndex() {
   float in_h = inside_dht.readHumidity();
   float in_tt = inside_dht.readTemperature();
@@ -221,7 +233,8 @@ float differenceInHeatIndex() {
   return out_hic - in_hic;
 }
 
-//Might wanna split this up into multiple writes so we can do them when relevant.
+// Responsible Mikkel (s194601)
+// Write all relevant data to thingspeak.
 void writeToThingSpeak() {
   ThingSpeak.begin(client);
   client.connect(server, 80);
@@ -315,6 +328,8 @@ void fetchUpdateFromTalkBack() {
   }
 }
 
+// Responsible Thor Dueholm (s194589)
+// What we recieve from the talkback
 void HandelStringInput(char* input) {
   if (compareStartOfString("SET_TEMP_", input)) {
     Serial.println(getTempFromString(input));
@@ -339,7 +354,7 @@ bool compareStartOfString(const char* pre, const char* str) {
   return strncmp(pre, str, strlen(pre)) == 0;
 }
 
-// General function to POST to ThingSpeak
+// General function to POST to ThingSpeak From https://se.mathworks.com/help/thingspeak/control-a-light-with-talkback-and-arduino.html
 int httpPOST(String uri, String postMessage, String& response) {
 
   bool connectSuccess = false;
@@ -384,8 +399,10 @@ int httpPOST(String uri, String postMessage, String& response) {
   return status;
 }
 
+// Responsible Victor (s203951)
+// Gets the integer X from the string SET_TEMP_X
 int getTempFromString(char* str) {
-  char tempString[9];  // "SET_TEMP_" is 8 characters long
+  char tempString[9];  // "SET_TEMP_" is 9 characters long
   int temp;
   if (strstr(str, "SET_TEMP_") != NULL) {
     strcpy(tempString, strstr(str, "SET_TEMP_") + 9);
@@ -396,6 +413,8 @@ int getTempFromString(char* str) {
   }
 }
 
+// Responsible Thor (s194589)
+// Only used for debugging through serial
 const char* getStateName(int state) {
   switch (state) {
     case SLEEP:
@@ -415,13 +434,14 @@ const char* getStateName(int state) {
   }
 }
 
-//TODO finish following function physical setup is complete:
+// Responsible Victor (s203951)
 void openBox() {
   s1.write(0);
   boxIsOpen = true;
   delay(3000);
 }
 
+// Responsible Victor (s203951)
 void closeBox() {
   s1.write(180);
   boxIsOpen = false;
@@ -429,17 +449,19 @@ void closeBox() {
 }
 
 
-//TODO at the very least this should have some overwrite switch that can be enabled in thingspeak.
+// Responsible Victor (s203951)
+// The model responsible for deciding when to turn on the motor.
 bool whenToUseTemperatureModel() {
-  int photoresistorValue = analogRead(photoresistorPin);
+  // overwrite logic
   if (overWriteActivated) {
     overWriteActivated = false;
     return true;
   }
+
+  int photoresistorValue = analogRead(photoresistorPin);
+  // If light is low (night) we accept lower threshold for hot air.
   if (photoresistorValue < 30) {
-    return (differenceInTemperature() > 2 && inside_dht.readTemperature() < desiredTemp &&
-            ((inside_dht.readHumidity() > 45 && outside_dht.readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht.readHumidity() > 30)));
+    return (differenceInTemperature() > 2 && inside_dht.readTemperature() < desiredTemp && ((inside_dht.readHumidity() > 45 && outside_dht.readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht.readHumidity() > 30)));
   }
-  return (differenceInTemperature() > 5 && inside_dht.readTemperature() < desiredTemp &&
-          ((inside_dht.readHumidity() > 45 && outside_dht.readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht.readHumidity() > 30)));
+  return (differenceInTemperature() > 5 && inside_dht.readTemperature() < desiredTemp && ((inside_dht.readHumidity() > 45 && outside_dht.readHumidity() < 45) || (inside_dht.readHumidity() < 30 && outside_dht.readHumidity() > 30)));
 }

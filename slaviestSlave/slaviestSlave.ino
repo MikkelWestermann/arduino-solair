@@ -1,3 +1,7 @@
+/*
+* Script resposible for the indoor temperature and humidity measurements aswell as displaying on the LCD screen.
+* Emil Slente Liljegren (s174036) was mainly reposible for creating this script.
+*/
 
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -9,8 +13,6 @@
 #define insideDHT11_Pin D4
 #define DHTTYPE DHT11
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-
-// 2C:3A:E8:38:16:6C
 
 uint8_t broadcastAddress[] = {0xC8, 0x2B, 0x96, 0x09, 0x0E, 0x47};
 typedef struct struct_message {
@@ -25,7 +27,7 @@ int dataSendTries = 0;
 
 DHT inside_dht(insideDHT11_Pin, DHTTYPE, 15);
 
-int readDelay = 1000 * 10;
+int readDelay = 1500;
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
